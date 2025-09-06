@@ -1,26 +1,24 @@
-(with K8S Stage)
-
 pipeline {
     agent any
 
     tools {
-        jdk 'jdk17'
-        nodejs 'node23'
+        jdk 'jdk21'
+        nodejs 'nodejs24'
     }
 
     environment {
         SCANNER_HOME = tool 'sonar-scanner'
         DOCKER_IMAGE = 'ashu290996/bms:latest'
     }
-    parmaeters {
-        booleanParam(name: 'GIT_CHECKOUT', defaultValue: 'main', description: 'Branch to checkout from Git')
-        booleanParam(name: 'SONARQUBE', defaultValue: 'true',  description: 'SonarQube Server')
-        booleanParam(name: 'INSTALL_DEPENDENCIES', defaultValue: 'true', description: 'Install project dependencies')
-        booleanParam(name: 'OWASP_SCAN', defaultValue: 'true', description: 'OWASP Dependency scan')
-        booleanParam(name: 'TRIVY_SCAN', defaultValue: 'true', description: 'TRIVY scan')
-        booleanParam(name: 'DOCKER_BUILD_PUSH', defaultValue: 'true', description: 'Build and Push Docker image')
-        booleanParam(name: 'DEPLOY_K8', defaultValue: 'true', description: 'Deploy to Kubernetes cluster')
-        bolleanParam(name: 'DEPLOY_MONITORING', defaultValue: 'true', description: 'Deploy Monitoring stack on K8S')
+    parameters {
+        booleanParam(name: 'GIT_CHECKOUT', defaultValue: true, description: 'Branch to checkout from Git')
+        booleanParam(name: 'SONARQUBE', defaultValue: true,  description: 'SonarQube Server')
+        booleanParam(name: 'INSTALL_DEPENDENCIES', defaultValue: true, description: 'Install project dependencies')
+        booleanParam(name: 'OWASP_SCAN', defaultValue: true, description: 'OWASP Dependency scan')
+        booleanParam(name: 'TRIVY_SCAN', defaultValue: true, description: 'TRIVY scan')
+        booleanParam(name: 'DOCKER_BUILD_PUSH', defaultValue: true, description: 'Build and Push Docker image')
+        booleanParam(name: 'DEPLOY_K8', defaultValue: true, description: 'Deploy to Kubernetes cluster')
+        booleanParam(name: 'DEPLOY_MONITORING', defaultValue: true, description: 'Deploy Monitoring stack on K8S')
     }
     stages {
         stage('Clean Workspace') {
@@ -40,7 +38,7 @@ pipeline {
         stage('SonarQube Analysis') {
             when { expression { params.SONARQUBE }}
             steps {
-                withSonarQubeEnv('sonar-server') {
+                withSonarQubeEnv('sonar-scanner') {
                     sh '''
                     $SCANNER_HOME/bin/sonar-scanner \
                         -Dsonar.projectName=BMS \
@@ -50,13 +48,13 @@ pipeline {
             }
         }
 
-        stage('Quality Gate') {
-            steps {
-                script {
-                    waitForQualityGate abortPipeline: false, credentialsId: 'sonar-scanner'
-                }
-            }
-        }
+        // stage('Quality Gate') {
+        //     steps {
+        //         script {
+        //             waitForQualityGate abortPipeline: false, credentialsId: 'sonar-scanner'
+        //         }
+        //     }
+        // }
 
         stage('Install Dependencies') {
             steps {
@@ -125,9 +123,9 @@ pipeline {
         }
 
         stage('Deploy Monitoring') {
-            when { expression {params.RUN_DEPLOY_MONITORING}}
+            when { expression {params.RDEPLOY_MONITORING}}
             steps {
-            withKubeConfig(caCertificate: '', clusterName: 'bms', contextName: '', credentialsId: 'k8-prod-token', namespace: 'prod', restrictKubeConfigAccess: false, serverUrl: 'https://blogging-dns-shmltoxg.hcp.eastus.azmk8s.io:443') 
+            withKubeConfig(caCertificate: '', clusterName: 'bms', contextName: '', credentialsId: 'k8-prod-token', namespace: 'prod', restrictKubeConfigAccess: false, serverUrl: 'https://bms-dns-ce2unfre.hcp.eastus.azmk8s.io:443') 
             {
                     sh '''
                curl -fsSL -o get_helm.sh https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3
