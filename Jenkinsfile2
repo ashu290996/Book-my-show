@@ -20,6 +20,7 @@ pipeline {
         booleanParam(name: 'TRIVY_SCAN', defaultValue: 'true', description: 'TRIVY scan')
         booleanParam(name: 'DOCKER_BUILD_PUSH', defaultValue: 'true', description: 'Build and Push Docker image')
         booleanParam(name: 'DEPLOY_K8', defaultValue: 'true', description: 'Deploy to Kubernetes cluster')
+        bolleanParam(name: 'DEPLOY_MONITORING', defaultValue: 'true', description: 'Deploy Monitoring stack on K8S')
     }
     stages {
         stage('Clean Workspace') {
@@ -29,13 +30,15 @@ pipeline {
         }
 
         stage('Checkout from Git') {
+            when { expression{ params.GIT_CHECKOUT }}
             steps {
-                git branch: 'main', url: 'https://github.com/KastroVKiran/Book-My-Show.git'
+                git branch: 'master', credentialsId: 'github-login', url: 'https://github.com/ashu290996/Book-my-show.git'
                 sh 'ls -la'  // Verify files after checkout
             }
         }
 
         stage('SonarQube Analysis') {
+            when { expression { params.SONARQUBE }}
             steps {
                 withSonarQubeEnv('sonar-server') {
                     sh '''
@@ -50,13 +53,14 @@ pipeline {
         stage('Quality Gate') {
             steps {
                 script {
-                    waitForQualityGate abortPipeline: false, credentialsId: 'Sonar-token'
+                    waitForQualityGate abortPipeline: false, credentialsId: 'sonar-scanner'
                 }
             }
         }
 
         stage('Install Dependencies') {
             steps {
+                when {expression { params.INSTALL_DEPENDENCIES }}
                 sh '''
                 cd bookmyshow-app
                 ls -la  # Verify package.json exists
@@ -72,6 +76,7 @@ pipeline {
         }
 
         stage('OWASP FS Scan') {
+            when { expression { params.OWASP_SCAN }}
             steps {
                 dependencyCheck additionalArguments: '--scan ./ --disableYarnAudit --disableNodeAudit', odcInstallation: 'DP-Check'
                 dependencyCheckPublisher pattern: '**/dependency-check-report.xml'
@@ -79,6 +84,7 @@ pipeline {
         }
 
         stage('Trivy FS Scan') {
+            when { expression { params.TRIVY_SCAN }}
             steps {
                 sh 'trivy fs . > trivyfs.txt'
             }
@@ -87,8 +93,9 @@ pipeline {
         stage('Docker Build & Push') {
             steps {
                 script {
-                    withDockerRegistry(credentialsId: 'docker', toolName: 'docker') {
-                        sh ''' 
+                    /* groovylint-disable-next-line NestedBlockDepth */
+                    withDockerRegistry(credentialsId: 'dockerhub', url: 'https://index.docker.io/v1/') {
+                        sh '''
                         echo "Building Docker image..."
                         docker build --no-cache -t $DOCKER_IMAGE -f bookmyshow-app/Dockerfile bookmyshow-app
 
@@ -101,19 +108,11 @@ pipeline {
         }
 
         stage('Deploy to AKS Cluster') {
+            when { expression { params.DEPLOY_K8 }}
             steps {
                 script {
                     sh '''
-                    echo "Verifying AWS credentials..."
-                    aws sts get-caller-identity
-
-                    echo "Configuring kubectl for EKS cluster..."
-                    aws eks update-kubeconfig --name $EKS_CLUSTER_NAME --region $AWS_REGION
-
-                    echo "Verifying kubeconfig..."
-                    kubectl config view
-
-                    echo "Deploying application to EKS..."
+                    echo "Deploying application to AKS..."
                     kubectl apply -f deployment.yml
                     kubectl apply -f service.yml
 
@@ -124,6 +123,25 @@ pipeline {
                 }
             }
         }
+
+        stage('Deploy Monitoring') {
+            when { expression {params.RUN_DEPLOY_MONITORING}}
+            steps {
+            withKubeConfig(caCertificate: '', clusterName: 'bms', contextName: '', credentialsId: 'k8-prod-token', namespace: 'prod', restrictKubeConfigAccess: false, serverUrl: 'https://blogging-dns-shmltoxg.hcp.eastus.azmk8s.io:443') 
+            {
+                    sh '''
+               curl -fsSL -o get_helm.sh https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3
+               chmod 700 get_helm.sh
+               ./get_helm.sh
+               helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+               helm repo update
+               helm upgrade --install monitoring prometheus-community/kube-prometheus-stack -f Monitoring/values.yaml -n monitoring --create-namespace
+               '''
+            }
+            }
+
+        }
+
     }
 
 // post {
